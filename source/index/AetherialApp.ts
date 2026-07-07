@@ -120,15 +120,7 @@ export class AetherialApp {
 
         const companionProfile = getCompanionProfile(companionMode);
 
-        if (EveResponse.speak){
-            try {
-                await this.requireVoice().generate(spokenText, companionProfile.voiceId);
-            } catch (error) {
-                console.warn("☁️ [System]: Cloud failed! Switching to local XTTS-v2 vocal cords...", error);
-                await this.requireBackupVoice().generate(spokenText);
-            }
-        }
-        
+        await this.generateVoiceForVisibleReply(spokenText, companionProfile.voiceId);
 
         const speakerLabel = mode === 'speech' ? 'speech' : 'text';
         console.log(`[${companionProfile.name}:${speakerLabel} (${emotion})]: "${spokenText}"`);
@@ -158,6 +150,55 @@ export class AetherialApp {
         await this.requireVoice().free();
         await this.requireBackupVoice().free();
         this.initialized = false;
+    }
+
+    private async generateVoiceForVisibleReply(text: string, voiceId?: string): Promise<void> {
+        if (process.env["COMPANION_VOICE_ENABLED"] === "false") {
+            return;
+        }
+
+        const speechText = this.toSpeechPreview(text);
+        if (!speechText) {
+            console.log("[Voice]: No safe speech preview generated.");
+            return;
+        }
+
+        const selectedVoiceId = process.env["COMPANION_VOICE_ID"] ?? voiceId;
+
+        try {
+            await this.requireVoice().generate(speechText, selectedVoiceId);
+            return;
+        } catch (error) {
+            console.warn("[Voice]: TypeCast failed. Continuing text-only unless local fallback is enabled.", error);
+        }
+
+        if (process.env["ENABLE_LOCAL_TTS_FALLBACK"] !== "true") {
+            return;
+        }
+
+        try {
+            await this.requireBackupVoice().generate(speechText);
+        } catch (error) {
+            console.warn("[Voice]: Local fallback failed. Text response remains available.", error);
+        }
+    }
+
+    private toSpeechPreview(text: string): string {
+        const cleaned = text
+            .replace(/```[\s\S]*?```/g, "I prepared a code block for you in the chat.")
+            .replace(/https?:\/\/\S+/g, "link omitted")
+            .replace(/[#*_`>|{}\[\]\\]/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (!cleaned) {
+            return "";
+        }
+
+        const sentences = cleaned.match(/[^.!?。！？]+[.!?。！？]+/g);
+        const preview = sentences?.slice(0, 2).join(" ") ?? cleaned;
+
+        return preview.length > 700 ? `${preview.slice(0, 697)}...` : preview;
     }
 
     private parseEveResponse(raw: string): EveResponse {
